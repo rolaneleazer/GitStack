@@ -199,11 +199,6 @@ export function Footer({
                   Contact &amp; Consultation
                 </a>
               </li>
-              <li>
-                <a href="/studio" onClick={(e) => go(e, '/studio')} className="hover:text-[#1E40AF]">
-                  Editorial &amp; AdSense Studio
-                </a>
-              </li>
             </ul>
           </div>
 

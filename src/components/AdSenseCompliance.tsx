@@ -84,7 +84,7 @@ export function GoogleAnalyticsLoader({
   route: string;
 }) {
   useEffect(() => {
-    if (!settings || route.startsWith('/studio')) return;
+    if (!settings || route.startsWith('/obama') || route.startsWith('/studio')) return;
     const gaId = (settings.ga4_measurement_id || '').trim().toUpperCase();
     if (!settings.ga4_enabled || !/^G-[A-Z0-9]{4,16}$/.test(gaId)) return;
     if (consent !== 'all') return;

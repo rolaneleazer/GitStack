@@ -94,6 +94,7 @@ export const api = {
       storageBackend: 'supabase' | 'local-json';
       supabaseUrl: string | null;
       supabaseTablesReady: boolean;
+      supabaseAutomationMode: 'db-url' | 'management-api' | 'manual';
     }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
@@ -109,7 +110,20 @@ export const api = {
       storageBackend: 'supabase' | 'local-json';
       supabaseUrl: string | null;
       supabaseTablesReady: boolean;
+      supabaseAutomationMode: 'db-url' | 'management-api' | 'manual';
     }>('/api/auth/session');
+  },
+
+  async migrateSupabase() {
+    return request<{
+      executed: boolean;
+      mode: 'db-url' | 'management-api' | 'manual';
+      message: string;
+      supabaseTablesReady: boolean;
+      seededPosts: number;
+    }>('/api/supabase/migrate', {
+      method: 'POST'
+    });
   },
 
   async seedSupabase() {
@@ -323,7 +337,7 @@ export const api = {
     path: string,
     meta: Record<string, string> = {}
   ) {
-    if (path.startsWith('/studio')) return;
+    if (path.startsWith('/obama') || path.startsWith('/studio')) return;
     fetch('/api/analytics/event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

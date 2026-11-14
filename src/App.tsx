@@ -68,7 +68,7 @@ export default function App() {
   }, [refreshPublicData]);
 
   useEffect(() => {
-    if (!route.startsWith('/studio')) {
+    if (!route.startsWith('/obama') && !route.startsWith('/studio')) {
       api.trackAnalyticsEvent('pageview', route || '/');
     }
   }, [route]);
@@ -176,7 +176,7 @@ export default function App() {
     if (route === '/disclaimer') {
       return <DisclaimerPage />;
     }
-    if (route === '/studio') {
+    if (route === '/obama' || route === '/studio') {
       return (
         <StudioPage
           onArticlesChanged={refreshPublicData}

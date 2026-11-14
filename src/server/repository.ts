@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Client as PgClient } from 'pg';
 import { DEFAULT_PAGE_CONTENTS } from '../shared/pageDefaults.ts';
 import {
   DEFAULT_ADSENSE_SETTINGS,
@@ -79,7 +80,11 @@ function getSupabaseServiceKey(): string | undefined {
   if (!baseUrl || !activeUrl || baseUrl !== activeUrl) {
     return undefined;
   }
-  return process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || undefined;
+  return (
+    process.env.SUPABASE_SECRET_KEY?.trim() ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+    undefined
+  );
 }
 
 export function isSupabaseConfigured(): boolean {
@@ -123,14 +128,136 @@ function isFallbackableDbError(error: { code?: string; message?: string } | null
   );
 }
 
+export type SupabaseAutomationMode = 'db-url' | 'management-api' | 'manual';
+
+export function getSupabaseAutomationMode(): SupabaseAutomationMode {
+  if (process.env.SUPABASE_DB_URL?.trim()) return 'db-url';
+  if (process.env.SUPABASE_ACCESS_TOKEN?.trim() && getSupabaseProjectRef()) return 'management-api';
+  return 'manual';
+}
+
+function getSupabaseProjectRef(): string | undefined {
+  const url = getSupabaseUrl();
+  if (!url) return undefined;
+  const match = url.match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co/i);
+  return match?.[1];
+}
+
 export async function checkSupabaseTablesReady(): Promise<boolean> {
   if (!isSupabaseConfigured()) return false;
   try {
-    const { error } = await getSupabaseClient().from('posts').select('id').limit(1);
-    return !error;
+    const client = getSupabaseClient();
+    const [postsRes, pagesRes] = await Promise.all([
+      client.from('posts').select('id').limit(1),
+      client.from('page_contents').select('page_key').limit(1)
+    ]);
+    return !postsRes.error && !pagesRes.error;
   } catch {
     return false;
   }
+}
+
+function normalizePostgresUrl(raw: string): { url: string; host: string } {
+  const trimmed = raw.trim();
+  const schemeIdx = trimmed.indexOf('://');
+  const lastAt = trimmed.lastIndexOf('@');
+  if (schemeIdx === -1 || lastAt === -1) {
+    return { url: trimmed, host: '' };
+  }
+  const prefix = trimmed.slice(0, schemeIdx + 3);
+  const authPart = trimmed.slice(schemeIdx + 3, lastAt);
+  const hostAndRest = trimmed.slice(lastAt + 1);
+  const colonIdx = authPart.indexOf(':');
+  const encodedAuth =
+    colonIdx === -1
+      ? authPart
+      : `${authPart.slice(0, colonIdx)}:${encodeURIComponent(decodeURIComponentSafe(authPart.slice(colonIdx + 1)))}`;
+  const hostMatch = hostAndRest.match(/^([^:/?]+)/);
+  return { url: `${prefix}${encodedAuth}@${hostAndRest}`, host: hostMatch?.[1] || '' };
+}
+
+function decodeURIComponentSafe(val: string): string {
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
+}
+
+export async function autoMigrateSupabaseSchema(): Promise<{
+  executed: boolean;
+  mode: SupabaseAutomationMode;
+  message: string;
+}> {
+  const mode = getSupabaseAutomationMode();
+  if (!isSupabaseConfigured()) {
+    return {
+      executed: false,
+      mode,
+      message: 'Supabase URL and Publishable Key are not configured yet.'
+    };
+  }
+
+  const schemaPath = path.resolve(process.cwd(), 'supabase', 'schema.sql');
+  const sql = await fs.readFile(schemaPath, 'utf8');
+
+  if (mode === 'db-url') {
+    const { url: dbUrl, host } = normalizePostgresUrl(process.env.SUPABASE_DB_URL!);
+    const apiProjectRef = getSupabaseProjectRef();
+    const dbRefMatch = host.match(/^db\.([a-z0-9-]+)\.supabase\.co$/i);
+    if (apiProjectRef && dbRefMatch && dbRefMatch[1].toLowerCase() !== apiProjectRef.toLowerCase()) {
+      return {
+        executed: false,
+        mode,
+        message: `Project mismatch: NEXT_PUBLIC_SUPABASE_URL targets "${apiProjectRef}", while SUPABASE_DB_URL targets "${dbRefMatch[1]}". Align both to the same Supabase project before running migrations.`
+      };
+    }
+
+    const pg = new PgClient({
+      connectionString: dbUrl,
+      ssl: { rejectUnauthorized: false }
+    });
+    try {
+      await pg.connect();
+      await pg.query(sql);
+      return {
+        executed: true,
+        mode,
+        message: 'Supabase PostgreSQL schema and policies migrated automatically via SUPABASE_DB_URL.'
+      };
+    } finally {
+      await pg.end().catch(() => {});
+    }
+  }
+
+  if (mode === 'management-api') {
+    const token = process.env.SUPABASE_ACCESS_TOKEN!.trim();
+    const projectRef = getSupabaseProjectRef()!;
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ query: sql })
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Supabase Management API migration failed (${res.status}): ${text}`);
+    }
+    return {
+      executed: true,
+      mode,
+      message: 'Supabase PostgreSQL schema and policies migrated automatically via SUPABASE_ACCESS_TOKEN.'
+    };
+  }
+
+  return {
+    executed: false,
+    mode: 'manual',
+    message:
+      'Automatic DDL requires SUPABASE_DB_URL or SUPABASE_ACCESS_TOKEN in your environment secrets (the Publishable Key cannot execute CREATE TABLE).'
+  };
 }
 
 function signLocalToken(email: string): string {
@@ -248,22 +375,38 @@ export async function seedStarterDataToSupabase(userToken?: string): Promise<{ s
     throw new Error('Supabase environment variables are not configured.');
   }
   const sb = getSupabaseClient(userToken);
-  const { error: postsErr } = await sb.from('posts').upsert(SEED_ARTICLES, { onConflict: 'id' });
+  const { error: postsErr } = await sb
+    .from('posts')
+    .upsert(SEED_ARTICLES, { onConflict: 'id', ignoreDuplicates: true });
   if (postsErr) throw new Error(postsErr.message);
 
-  await sb.from('comments').upsert(SEED_COMMENTS, { onConflict: 'id' });
+  await sb.from('comments').upsert(SEED_COMMENTS, { onConflict: 'id', ignoreDuplicates: true });
   await sb
     .from('site_settings')
-    .upsert({ id: 'default', ...DEFAULT_ADSENSE_SETTINGS }, { onConflict: 'id' });
+    .upsert({ id: 'default', ...DEFAULT_ADSENSE_SETTINGS }, { onConflict: 'id', ignoreDuplicates: true });
 
-  // Also seed new Back Office tables gracefully when present
-  await sb.from('page_contents').upsert(Object.values(DEFAULT_PAGE_CONTENTS), { onConflict: 'page_key' });
-  await sb.from('agent_tasks').upsert(SEED_AGENT_TASKS, { onConflict: 'id' });
-  await sb.from('chat_threads').upsert(SEED_CHAT_THREADS, { onConflict: 'id' });
-  await sb.from('chat_messages').upsert(SEED_CHAT_MESSAGES, { onConflict: 'id' });
-  await sb.from('analytics_events').upsert(SEED_ANALYTICS_EVENTS, { onConflict: 'id' });
+  // Also seed Back Office tables gracefully without overwriting user customizations
+  await sb
+    .from('page_contents')
+    .upsert(Object.values(DEFAULT_PAGE_CONTENTS), { onConflict: 'page_key', ignoreDuplicates: true });
+  await sb.from('agent_tasks').upsert(SEED_AGENT_TASKS, { onConflict: 'id', ignoreDuplicates: true });
+  await sb.from('chat_threads').upsert(SEED_CHAT_THREADS, { onConflict: 'id', ignoreDuplicates: true });
+  await sb.from('chat_messages').upsert(SEED_CHAT_MESSAGES, { onConflict: 'id', ignoreDuplicates: true });
+  await sb.from('analytics_events').upsert(SEED_ANALYTICS_EVENTS, { onConflict: 'id', ignoreDuplicates: true });
 
   return { seededPosts: SEED_ARTICLES.length };
+}
+
+export async function autoSeedSupabaseIfEmpty(): Promise<boolean> {
+  if (!isSupabaseConfigured() || !getSupabaseServiceKey()) return false;
+  const sb = getSupabaseClient();
+  const { count, error } = await sb.from('posts').select('id', { count: 'exact', head: true });
+  if (error) return false;
+  if ((count ?? 0) === 0) {
+    await seedStarterDataToSupabase();
+    return true;
+  }
+  return false;
 }
 
 export async function listPosts(includeDrafts: boolean, userToken?: string): Promise<Article[]> {

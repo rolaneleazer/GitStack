@@ -92,7 +92,7 @@ export function AnalyticsDashboard({
           <div className="mt-2 font-mono text-2xl font-bold text-slate-900 tabular-nums">
             {summary?.totalPageviews ?? 0}
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">Public routes excluding /studio</p>
+          <p className="mt-1 text-[11px] text-slate-500">Public routes excluding /obama</p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <div className="text-xs text-slate-500">Unique Sessions</div>

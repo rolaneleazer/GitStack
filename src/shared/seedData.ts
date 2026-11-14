@@ -473,7 +473,7 @@ export const SEED_AGENT_TASKS = [
     title: 'Confirm Supabase GRANT & RLS policies are executed in SQL Editor',
     priority: 'high' as const,
     completed: false,
-    notes: 'Keep /studio private and excluded from public sitemap.',
+    notes: 'Keep /obama Back Office private and excluded from public sitemap.',
     updated_at: '2026-11-12T10:30:00Z'
   },
   {

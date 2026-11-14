@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS public.analytics_events (
 CREATE INDEX IF NOT EXISTS idx_analytics_created_at ON public.analytics_events (created_at DESC);
 
 -- Grant schema and least-privilege table access (enforced by Row-Level Security below)
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT SELECT ON public.posts TO anon;
 GRANT SELECT, INSERT ON public.comments TO anon;
 GRANT INSERT ON public.subscribers TO anon;
@@ -166,7 +166,7 @@ GRANT INSERT ON public.inquiries TO anon;
 GRANT SELECT ON public.site_settings TO anon;
 GRANT SELECT ON public.page_contents TO anon;
 GRANT INSERT ON public.analytics_events TO anon;
-GRANT ALL ON public.posts, public.comments, public.subscribers, public.inquiries, public.site_settings, public.page_contents, public.agent_tasks, public.chat_threads, public.chat_messages, public.analytics_events TO authenticated;
+GRANT ALL ON public.posts, public.comments, public.subscribers, public.inquiries, public.site_settings, public.page_contents, public.agent_tasks, public.chat_threads, public.chat_messages, public.analytics_events TO authenticated, service_role;
 
 -- Enable Row-Level Security
 ALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;

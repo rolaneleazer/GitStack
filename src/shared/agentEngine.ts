@@ -202,8 +202,8 @@ export function buildAllAgentReports(ctx: AgentAuditContext): AgentReport[] {
       id: 'sec-auth-gate',
       label: 'Private Back Office Authentication & Crawler Exclusion',
       status: 'pass',
-      metric: 'Protected /studio',
-      detail: 'Studio APIs require Bearer token verification and /robots.txt explicitly disallows /studio and /api/.'
+      metric: 'Protected /obama',
+      detail: 'Back Office APIs require Bearer token verification and /robots.txt explicitly disallows /obama, /studio, and /api/.'
     },
     {
       id: 'sec-consent-gate',

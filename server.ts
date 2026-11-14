@@ -31,6 +31,8 @@ import type {
 import {
   addChatMessage,
   addSubscriber,
+  autoMigrateSupabaseSchema,
+  autoSeedSupabaseIfEmpty,
   checkSupabaseTablesReady,
   createChatThread,
   createComment,
@@ -40,6 +42,7 @@ import {
   getAdSenseSettings,
   getAnalyticsSummary,
   getPostBySlug,
+  getSupabaseAutomationMode,
   getSupabaseUrl,
   isSupabaseConfigured,
   listAgentTasks,
@@ -187,6 +190,20 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
 
+  // Auto-run Supabase schema migrations & initial seed on server boot when credentials are set
+  try {
+    const migration = await autoMigrateSupabaseSchema();
+    if (migration.executed) {
+      console.log(`[GitStack DB] ${migration.message}`);
+    }
+    const seeded = await autoSeedSupabaseIfEmpty();
+    if (seeded) {
+      console.log('[GitStack DB] Seeded starter guides, page defaults, and Back Office data.');
+    }
+  } catch (err) {
+    console.warn('[GitStack DB] Startup auto-migration skipped:', err instanceof Error ? err.message : err);
+  }
+
   // --- Crawler, AI Discovery & AdSense Root Endpoints ---
 
   app.get('/robots.txt', (req, res) => {
@@ -195,6 +212,7 @@ async function startServer() {
       '# GitStack Crawler & AI Discovery Policy',
       'User-agent: *',
       'Allow: /',
+      'Disallow: /obama',
       'Disallow: /studio',
       'Disallow: /api/',
       '',
@@ -349,7 +367,8 @@ async function startServer() {
       ok: true,
       storageBackend: isSupabaseConfigured() ? 'supabase' : 'local-json',
       supabaseUrl: getSupabaseUrl() || null,
-      supabaseTablesReady
+      supabaseTablesReady,
+      supabaseAutomationMode: getSupabaseAutomationMode()
     });
   });
 
@@ -372,7 +391,8 @@ async function startServer() {
       editor: result.session,
       storageBackend: isSupabaseConfigured() ? 'supabase' : 'local-json',
       supabaseUrl: getSupabaseUrl() || null,
-      supabaseTablesReady
+      supabaseTablesReady,
+      supabaseAutomationMode: getSupabaseAutomationMode()
     });
   });
 
@@ -384,8 +404,26 @@ async function startServer() {
       editor: session,
       storageBackend: isSupabaseConfigured() ? 'supabase' : 'local-json',
       supabaseUrl: getSupabaseUrl() || null,
-      supabaseTablesReady
+      supabaseTablesReady,
+      supabaseAutomationMode: getSupabaseAutomationMode()
     });
+  });
+
+  app.post('/api/supabase/migrate', requireEditor, async (req, res) => {
+    try {
+      const migration = await autoMigrateSupabaseSchema();
+      const supabaseTablesReady = await checkSupabaseTablesReady();
+      let seededPosts = 0;
+      if (migration.executed && supabaseTablesReady) {
+        const seeded = await seedStarterDataToSupabase(getBearerToken(req));
+        seededPosts = seeded.seededPosts;
+      }
+      res.json({ ...migration, supabaseTablesReady, seededPosts });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Automated Supabase migration failed.'
+      });
+    }
   });
 
   app.post('/api/supabase/seed', requireEditor, async (req, res) => {
@@ -1101,7 +1139,7 @@ async function startServer() {
       if (!pagePath || typeof pagePath !== 'string') {
         return res.status(400).json({ error: 'Path is required.' });
       }
-      if (pagePath.startsWith('/studio')) {
+      if (pagePath.startsWith('/obama') || pagePath.startsWith('/studio')) {
         return res.json({ ok: true, skipped: true });
       }
       const allowed: AnalyticsEventType[] = [

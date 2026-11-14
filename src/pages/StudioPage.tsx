@@ -3,6 +3,7 @@ import {
   BarChart3,
   Bot,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -130,6 +131,8 @@ export function StudioPage({
   const [storageBackend, setStorageBackend] = useState<'supabase' | 'local-json'>('local-json');
   const [supabaseUrl, setSupabaseUrl] = useState<string | null>(null);
   const [supabaseTablesReady, setSupabaseTablesReady] = useState(false);
+  const [supabaseAutomationMode, setSupabaseAutomationMode] = useState<'db-url' | 'management-api' | 'manual'>('manual');
+  const [migratingSupabase, setMigratingSupabase] = useState(false);
   const [seedingSupabase, setSeedingSupabase] = useState(false);
   const [seedMessage, setSeedMessage] = useState<string | null>(null);
 
@@ -181,7 +184,7 @@ export function StudioPage({
     applySeoMetadata({
       title: 'GitStack Private Back Office',
       description: 'Protected operator workspace for GitStack pages, agents, inbox, chat, and analytics.',
-      path: '/studio',
+      path: '/obama',
       robots: 'noindex, nofollow'
     });
   }, []);
@@ -238,6 +241,7 @@ export function StudioPage({
         setStorageBackend(res.storageBackend);
         setSupabaseUrl(res.supabaseUrl);
         setSupabaseTablesReady(res.supabaseTablesReady);
+        setSupabaseAutomationMode(res.supabaseAutomationMode || 'manual');
         if (res.storageBackend === 'local-json') {
           setLoginEmail('admin@gitstack.io');
         }
@@ -261,6 +265,7 @@ export function StudioPage({
       setStorageBackend(res.storageBackend);
       setSupabaseUrl(res.supabaseUrl);
       setSupabaseTablesReady(res.supabaseTablesReady);
+      setSupabaseAutomationMode(res.supabaseAutomationMode || 'manual');
       await loadWorkspaceData(analyticsDays);
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : 'Sign in failed.');
@@ -1607,7 +1612,7 @@ export function StudioPage({
 
                 <div className="rounded-xl border border-slate-200 bg-white p-6">
                   <h3 className="font-display text-base font-bold text-slate-900">
-                    Supabase PostgreSQL &amp; Email Auth Status
+                    Supabase PostgreSQL &amp; Auto-Migration Status
                   </h3>
                   <div className="mt-2 space-y-1.5 text-xs text-slate-600">
                     <p>
@@ -1628,16 +1633,73 @@ export function StudioPage({
                       <strong className={supabaseTablesReady ? 'text-[#16A34A]' : 'text-amber-700'}>
                         {supabaseTablesReady
                           ? 'Active (posts, comments, subscribers, inquiries, page_contents, agent_tasks, chat_threads, chat_messages, analytics_events, site_settings)'
-                          : 'Pending — run schema.sql in Supabase SQL Editor'}
+                          : 'Pending — run auto-migration or schema.sql once'}
+                      </strong>
+                    </p>
+                    <p>
+                      Auto-migration:{' '}
+                      <strong className={supabaseAutomationMode === 'manual' ? 'text-slate-700' : 'text-[#16A34A]'}>
+                        {supabaseAutomationMode === 'db-url'
+                          ? 'Enabled automatically on startup (SUPABASE_DB_URL)'
+                          : supabaseAutomationMode === 'management-api'
+                            ? 'Enabled automatically on startup (SUPABASE_ACCESS_TOKEN)'
+                            : 'Manual SQL mode — add SUPABASE_DB_URL or SUPABASE_ACCESS_TOKEN to environment secrets for 100% automatic migrations'}
                       </strong>
                     </p>
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
+                    {storageBackend === 'supabase' && (
+                      <button
+                        type="button"
+                        disabled={migratingSupabase}
+                        onClick={async () => {
+                          setMigratingSupabase(true);
+                          setSeedMessage(null);
+                          try {
+                            const res = await api.migrateSupabase();
+                            setSupabaseTablesReady(res.supabaseTablesReady);
+                            setSeedMessage(res.message);
+                            if (res.executed) {
+                              await loadWorkspaceData(analyticsDays);
+                              onArticlesChanged();
+                              onPagesChanged();
+                            }
+                          } catch (err) {
+                            setSeedMessage(
+                              err instanceof Error ? err.message : 'Auto-migration failed.'
+                            );
+                          } finally {
+                            setMigratingSupabase(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#1E40AF] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-60"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${migratingSupabase ? 'animate-spin' : ''}`} />
+                        <span>{migratingSupabase ? 'Migrating...' : 'Run Auto-Migration Now'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch('/api/supabase-schema');
+                          const sql = await res.text();
+                          await navigator.clipboard.writeText(sql);
+                          setSeedMessage('Copied schema.sql to clipboard — paste once in Supabase SQL Editor.');
+                        } catch {
+                          setSeedMessage('Unable to copy automatically. Use Download schema.sql instead.');
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      <span>Copy schema.sql</span>
+                    </button>
                     <button
                       type="button"
                       onClick={handleDownloadSchema}
-                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
                     >
                       <Download className="h-3.5 w-3.5" />
                       <span>Download schema.sql</span>
@@ -1664,16 +1726,16 @@ export function StudioPage({
                             setSeedingSupabase(false);
                           }
                         }}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#1E40AF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-60"
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#1E40AF] bg-white px-3.5 py-2 text-xs font-semibold text-[#1E40AF] hover:bg-blue-50 disabled:opacity-60"
                       >
                         <span>
-                          {seedingSupabase ? 'Syncing...' : 'Sync Starter Guides to Supabase'}
+                          {seedingSupabase ? 'Syncing...' : 'Sync Starter Guides'}
                         </span>
                       </button>
                     )}
                   </div>
                   {seedMessage && (
-                    <p className="mt-3 text-xs font-medium text-[#16A34A]">{seedMessage}</p>
+                    <p className="mt-3 text-xs font-medium text-slate-700">{seedMessage}</p>
                   )}
                 </div>
               </div>
